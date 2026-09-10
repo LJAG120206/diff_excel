@@ -64,6 +64,7 @@ export async function parseWorkbook(file: File): Promise<WorkbookData> {
   const isText = lower.endsWith('.csv') || lower.endsWith('.tsv') || lower.endsWith('.txt')
 
   let wb: XLSX.WorkBook
+  let buffer: ArrayBuffer | undefined
   if (isText) {
     const text = await file.text()
     wb = XLSX.read(text, {
@@ -72,8 +73,9 @@ export async function parseWorkbook(file: File): Promise<WorkbookData> {
       FS: lower.endsWith('.tsv') ? '\t' : undefined,
     })
   } else {
-    const buffer = await file.arrayBuffer()
-    wb = XLSX.read(buffer, {
+    const data = await file.arrayBuffer()
+    buffer = data.slice(0)
+    wb = XLSX.read(data, {
       type: 'array',
       cellDates: true,
       cellFormula: true,
@@ -81,11 +83,13 @@ export async function parseWorkbook(file: File): Promise<WorkbookData> {
   }
 
   const sheets = wb.SheetNames.map((name) => parseSheet(wb.Sheets[name]!, name))
+  const keepBuffer = lower.endsWith('.xlsx') || lower.endsWith('.xlsm')
 
   return {
     fileName: file.name,
     fileSize: file.size,
     sheets,
+    buffer: keepBuffer ? buffer : undefined,
   }
 }
 

@@ -119,3 +119,30 @@ export function IconReset(props: IconProps) {
     </svg>
   )
 }
+
+export function IconMerge(props: IconProps) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" {...props}>
+      <path d="M5 2v7.5A2.5 2.5 0 0 0 7.5 12H11" stroke="currentColor" />
+      <circle cx="5" cy="2" r="1.3" fill="currentColor" />
+      <circle cx="5" cy="14" r="1.3" fill="currentColor" />
+      <path d="M11 9.5 13.5 12 11 14.5" stroke="currentColor" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+export function IconChevronLeft(props: IconProps) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" {...props}>
+      <path d="M10 3.5 5.5 8 10 12.5" stroke="currentColor" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+export function IconChevronRight(props: IconProps) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" {...props}>
+      <path d="M6 3.5 10.5 8 6 12.5" stroke="currentColor" strokeLinejoin="round" />
+    </svg>
+  )
+}

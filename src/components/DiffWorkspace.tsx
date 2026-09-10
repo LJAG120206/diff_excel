@@ -1,10 +1,22 @@
 import { useMemo } from 'react'
-import type { DiffOptions, SheetDiff, Theme, ViewMode, WorkbookDiff } from '../types.ts'
+import type {
+  DiffOptions,
+  MergeDecisions,
+  MergeSide,
+  Resolution,
+  RowDiff,
+  SheetDiff,
+  Theme,
+  ViewMode,
+  WorkbookDiff,
+} from '../types.ts'
+import { countPending } from '../excel/merge.ts'
 import {
   IconArrowDown,
   IconArrowUp,
   IconDownload,
   IconGear,
+  IconMerge,
   IconMoon,
   IconReset,
   IconSun,
@@ -34,6 +46,16 @@ interface Props {
   onSwap: () => void
   onReset: () => void
   onExport: () => void
+  decisions: MergeDecisions
+  onAcceptAll: (side: MergeSide) => void
+  onSaveMerged: () => void
+  saving?: boolean
+  error?: string | null
+  onRowDecision: (row: RowDiff, value: Resolution) => void
+  onCellDecision: (row: RowDiff, letter: string, value: Resolution) => void
+  onColumnDecision: (letter: string, value: Resolution) => void
+  onHunkDecision: (rows: RowDiff[], value: Resolution) => void
+  onSheetDecision: (value: Resolution) => void
 }
 
 export function DiffWorkspace({
@@ -57,9 +79,23 @@ export function DiffWorkspace({
   onSwap,
   onReset,
   onExport,
+  decisions,
+  onAcceptAll,
+  onSaveMerged,
+  saving = false,
+  error = null,
+  onRowDecision,
+  onCellDecision,
+  onColumnDecision,
+  onHunkDecision,
+  onSheetDecision,
 }: Props) {
   const sheet = diff.sheets.find((s) => s.name === selected) ?? diff.sheets[0]
   const ordered = useMemo(() => orderSheets(diff.sheets), [diff.sheets])
+  const pending = useMemo(
+    () => countPending(diff, decisions, options.headerRow),
+    [diff, decisions, options.headerRow],
+  )
 
   if (!sheet) return null
 
@@ -107,7 +143,7 @@ export function DiffWorkspace({
             <li key={item.name}>
               <button
                 type="button"
-                className={`sheet-item ${item.name === sheet.name ? 'is-active' : ''} status-${item.status}`}
+                className={`sheet-item ${item.name === sheet.name ? 'is-active' : ''} status-${item.status} is-${decisions.sheets[item.name] ?? 'pending'}`}
                 onClick={() => onSelect(item.name)}
               >
                 <span className="sheet-status">{statusLetter(item.status)}</span>
@@ -202,6 +238,31 @@ export function DiffWorkspace({
         </details>
       </div>
 
+      <div className="mergebar">
+        <IconMerge className="mergebar-icon" />
+        <button type="button" onClick={() => onAcceptAll('current')}>
+          Accepter toutes les actuelles
+        </button>
+        <button type="button" onClick={() => onAcceptAll('incoming')}>
+          Accepter toutes les entrantes
+        </button>
+        <span className="mergebar-count">
+          {pending.total === 0
+            ? 'Toutes les modifications sont tranchées'
+            : `${pending.total} en attente`}
+        </span>
+        {error ? <span className="mergebar-error">{error}</span> : null}
+        <button
+          type="button"
+          className="merge-save"
+          onClick={onSaveMerged}
+          disabled={saving}
+          title="Conserve couleurs, polices, bordures et mises en forme. Les modifications encore en attente restent celles du fichier de base."
+        >
+          {saving ? 'Génération du fichier…' : 'Enregistrer le classeur fusionné'}
+        </button>
+      </div>
+
       <main className="main">
         <DiffView
           sheet={sheet}
@@ -210,6 +271,16 @@ export function DiffWorkspace({
           showFormulas={showFormulas || options.compareFormulas}
           headerRow={options.headerRow}
           changeIndex={changeIndex}
+          oldName={diff.oldName}
+          newName={diff.newName}
+          decisions={decisions}
+          merge={{
+            onRow: onRowDecision,
+            onCell: onCellDecision,
+            onColumn: onColumnDecision,
+            onHunk: onHunkDecision,
+            onSheet: onSheetDecision,
+          }}
         />
       </main>
     </div>

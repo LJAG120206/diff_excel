@@ -3,15 +3,25 @@ import { DiffWorkspace } from './components/DiffWorkspace.tsx'
 import { UploadScreen } from './components/UploadScreen.tsx'
 import { defaultOptions, diffWorkbooks } from './excel/diff.ts'
 import { downloadText, exportDiffCsv } from './excel/export.ts'
+import {
+  acceptAll,
+  downloadMergedXlsx,
+  emptyDecisions,
+  setCellDecision,
+  setColumnDecision,
+  setHunkDecision,
+  setRowDecision,
+  setSheetDecision,
+} from './excel/merge.ts'
 import { createSampleWorkbooks } from './excel/sample.ts'
-import type { DiffOptions, Theme, ViewMode, WorkbookData } from './types.ts'
+import type { DiffOptions, MergeDecisions, Resolution, RowDiff, Theme, ViewMode, WorkbookData } from './types.ts'
 
 export default function App() {
   const [oldWb, setOldWb] = useState<WorkbookData | null>(null)
   const [newWb, setNewWb] = useState<WorkbookData | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [options, setOptions] = useState<DiffOptions>(defaultOptions)
-  const [view, setView] = useState<ViewMode>('unified')
+  const [view, setView] = useState<ViewMode>('split')
   const [showAll, setShowAll] = useState(false)
   const [showFormulas, setShowFormulas] = useState(false)
   const [theme, setTheme] = useState<Theme>(() => {
@@ -20,6 +30,8 @@ export default function App() {
   })
   const [selected, setSelected] = useState<string | null>(null)
   const [changeIndex, setChangeIndex] = useState(0)
+  const [decisions, setDecisions] = useState<MergeDecisions>(emptyDecisions)
+  const [saving, setSaving] = useState(false)
 
   const diff = useMemo(() => {
     if (!oldWb || !newWb) return null
@@ -55,7 +67,12 @@ export default function App() {
 
   useEffect(() => {
     setChangeIndex(0)
-  }, [sheetName, diff])
+    setDecisions(emptyDecisions())
+  }, [oldWb, newWb])
+
+  useEffect(() => {
+    setChangeIndex(0)
+  }, [sheetName])
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -101,6 +118,12 @@ export default function App() {
     setSelected(null)
     setError(null)
     setChangeIndex(0)
+    setDecisions(emptyDecisions())
+  }
+
+  function withSheet(update: (sheetName: string) => void) {
+    if (!sheetName) return
+    update(sheetName)
   }
 
   if (!diff || !sheetName) {
@@ -145,6 +168,39 @@ export default function App() {
         const base = diff.newName.replace(/\.[^.]+$/, '')
         downloadText(`${base}-diff.csv`, csv, 'text/csv;charset=utf-8')
       }}
+      decisions={decisions}
+      saving={saving}
+      error={error}
+      onAcceptAll={(side) => setDecisions(acceptAll(diff, side))}
+      onSaveMerged={() => {
+        if (!oldWb || !newWb) return
+        void (async () => {
+          setSaving(true)
+          setError(null)
+          try {
+            await downloadMergedXlsx(diff, decisions, options.headerRow, oldWb, newWb)
+          } catch (err) {
+            setError(err instanceof Error ? err.message : 'Impossible de générer le fichier fusionné')
+          } finally {
+            setSaving(false)
+          }
+        })()
+      }}
+      onRowDecision={(row: RowDiff, value: Resolution) =>
+        withSheet((name) => setDecisions((prev) => setRowDecision(prev, name, row, value)))
+      }
+      onCellDecision={(row, letter, value) =>
+        withSheet((name) => setDecisions((prev) => setCellDecision(prev, name, row, letter, value)))
+      }
+      onColumnDecision={(letter, value) =>
+        withSheet((name) => setDecisions((prev) => setColumnDecision(prev, name, letter, value)))
+      }
+      onHunkDecision={(rows, value) =>
+        withSheet((name) => setDecisions((prev) => setHunkDecision(prev, name, rows, value)))
+      }
+      onSheetDecision={(value) =>
+        withSheet((name) => setDecisions((prev) => setSheetDecision(prev, name, value)))
+      }
     />
   )
 }

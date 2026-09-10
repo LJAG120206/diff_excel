@@ -13,6 +13,7 @@ export interface WorkbookData {
   fileName: string
   fileSize: number
   sheets: SheetData[]
+  buffer?: ArrayBuffer
 }
 
 export interface DiffOptions {
@@ -86,3 +87,13 @@ export interface WorkbookDiff {
 
 export type ViewMode = 'unified' | 'split'
 export type Theme = 'dark' | 'light'
+
+export type MergeSide = 'current' | 'incoming'
+export type Resolution = 'pending' | MergeSide
+
+export interface MergeDecisions {
+  sheets: Record<string, Resolution>
+  columns: Record<string, Resolution>
+  rows: Record<string, Resolution>
+  cells: Record<string, Resolution>
+}

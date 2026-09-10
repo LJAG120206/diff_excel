@@ -3,4 +3,12 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  optimizeDeps: {
+    include: ['exceljs'],
+  },
+  resolve: {
+    alias: {
+      exceljs: 'exceljs/dist/exceljs.min.js',
+    },
+  },
 })
