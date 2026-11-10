@@ -3,6 +3,7 @@ import { DiffWorkspace } from './components/DiffWorkspace.tsx'
 import { UploadScreen } from './components/UploadScreen.tsx'
 import { defaultOptions, diffWorkbooks } from './excel/diff.ts'
 import { downloadText, exportDiffCsv } from './excel/export.ts'
+import { downloadHighlightedXlsx } from './excel/highlight.ts'
 import {
   acceptAll,
   downloadMergedXlsx,
@@ -14,7 +15,7 @@ import {
   setSheetDecision,
 } from './excel/merge.ts'
 import { createSampleWorkbooks } from './excel/sample.ts'
-import type { DiffOptions, MergeDecisions, Resolution, RowDiff, Theme, ViewMode, WorkbookData } from './types.ts'
+import type { DiffOptions, MergeDecisions, Theme, ViewMode, WorkbookData } from './types.ts'
 
 export default function App() {
   const [oldWb, setOldWb] = useState<WorkbookData | null>(null)
@@ -32,6 +33,7 @@ export default function App() {
   const [changeIndex, setChangeIndex] = useState(0)
   const [decisions, setDecisions] = useState<MergeDecisions>(emptyDecisions)
   const [saving, setSaving] = useState(false)
+  const [highlighting, setHighlighting] = useState(false)
 
   const diff = useMemo(() => {
     if (!oldWb || !newWb) return null
@@ -121,11 +123,6 @@ export default function App() {
     setDecisions(emptyDecisions())
   }
 
-  function withSheet(update: (sheetName: string) => void) {
-    if (!sheetName) return
-    update(sheetName)
-  }
-
   if (!diff || !sheetName) {
     return (
       <UploadScreen
@@ -168,6 +165,20 @@ export default function App() {
         const base = diff.newName.replace(/\.[^.]+$/, '')
         downloadText(`${base}-diff.csv`, csv, 'text/csv;charset=utf-8')
       }}
+      highlighting={highlighting}
+      onExportHighlight={() => {
+        void (async () => {
+          setHighlighting(true)
+          setError(null)
+          try {
+            await downloadHighlightedXlsx(diff, options.headerRow, oldWb ?? undefined, newWb ?? undefined)
+          } catch (err) {
+            setError(err instanceof Error ? err.message : 'Impossible de générer le comparatif coloré')
+          } finally {
+            setHighlighting(false)
+          }
+        })()
+      }}
       decisions={decisions}
       saving={saving}
       error={error}
@@ -186,21 +197,13 @@ export default function App() {
           }
         })()
       }}
-      onRowDecision={(row: RowDiff, value: Resolution) =>
-        withSheet((name) => setDecisions((prev) => setRowDecision(prev, name, row, value)))
+      onRowDecision={(name, row, value) => setDecisions((prev) => setRowDecision(prev, name, row, value))}
+      onCellDecision={(name, row, letter, value) =>
+        setDecisions((prev) => setCellDecision(prev, name, row, letter, value))
       }
-      onCellDecision={(row, letter, value) =>
-        withSheet((name) => setDecisions((prev) => setCellDecision(prev, name, row, letter, value)))
-      }
-      onColumnDecision={(letter, value) =>
-        withSheet((name) => setDecisions((prev) => setColumnDecision(prev, name, letter, value)))
-      }
-      onHunkDecision={(rows, value) =>
-        withSheet((name) => setDecisions((prev) => setHunkDecision(prev, name, rows, value)))
-      }
-      onSheetDecision={(value) =>
-        withSheet((name) => setDecisions((prev) => setSheetDecision(prev, name, value)))
-      }
+      onColumnDecision={(name, letter, value) => setDecisions((prev) => setColumnDecision(prev, name, letter, value))}
+      onHunkDecision={(name, rows, value) => setDecisions((prev) => setHunkDecision(prev, name, rows, value))}
+      onSheetDecision={(name, value) => setDecisions((prev) => setSheetDecision(prev, name, value))}
     />
   )
 }

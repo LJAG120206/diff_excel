@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import type {
   DiffOptions,
   MergeDecisions,
@@ -24,6 +24,7 @@ import {
   IconTable,
 } from './Icons.tsx'
 import { DiffView } from './DiffView.tsx'
+import { ReviewView } from './ReviewView.tsx'
 
 interface Props {
   diff: WorkbookDiff
@@ -46,16 +47,18 @@ interface Props {
   onSwap: () => void
   onReset: () => void
   onExport: () => void
+  onExportHighlight: () => void
+  highlighting?: boolean
   decisions: MergeDecisions
   onAcceptAll: (side: MergeSide) => void
   onSaveMerged: () => void
   saving?: boolean
   error?: string | null
-  onRowDecision: (row: RowDiff, value: Resolution) => void
-  onCellDecision: (row: RowDiff, letter: string, value: Resolution) => void
-  onColumnDecision: (letter: string, value: Resolution) => void
-  onHunkDecision: (rows: RowDiff[], value: Resolution) => void
-  onSheetDecision: (value: Resolution) => void
+  onRowDecision: (sheetName: string, row: RowDiff, value: Resolution) => void
+  onCellDecision: (sheetName: string, row: RowDiff, letter: string, value: Resolution) => void
+  onColumnDecision: (sheetName: string, letter: string, value: Resolution) => void
+  onHunkDecision: (sheetName: string, rows: RowDiff[], value: Resolution) => void
+  onSheetDecision: (sheetName: string, value: Resolution) => void
 }
 
 export function DiffWorkspace({
@@ -79,6 +82,8 @@ export function DiffWorkspace({
   onSwap,
   onReset,
   onExport,
+  onExportHighlight,
+  highlighting = false,
   decisions,
   onAcceptAll,
   onSaveMerged,
@@ -90,6 +95,7 @@ export function DiffWorkspace({
   onHunkDecision,
   onSheetDecision,
 }: Props) {
+  const [screen, setScreen] = useState<'review' | 'grid'>('review')
   const sheet = diff.sheets.find((s) => s.name === selected) ?? diff.sheets[0]
   const ordered = useMemo(() => orderSheets(diff.sheets), [diff.sheets])
   const pending = useMemo(
@@ -119,6 +125,15 @@ export function DiffWorkspace({
         </div>
         <Stats stats={diff.stats} />
         <div className="topbar-actions">
+          <button
+            type="button"
+            className="text-btn"
+            onClick={onExportHighlight}
+            disabled={highlighting || saving}
+            title="Garde la mise en forme d’origine. Vert = ajouté, rouge = supprimé. Une colonne modifiée est dédoublée : supprimez celle que vous ne gardez pas."
+          >
+            {highlighting ? 'Génération…' : 'Comparatif coloré'}
+          </button>
           <button type="button" className="icon-btn" onClick={onExport} title="Exporter le CSV des changements">
             <IconDownload />
           </button>
@@ -161,21 +176,34 @@ export function DiffWorkspace({
 
       <div className="toolbar">
         <div className="seg">
-          <button type="button" className={view === 'unified' ? 'is-on' : ''} onClick={() => onView('unified')}>
-            Unifié
+          <button type="button" className={screen === 'review' ? 'is-on' : ''} onClick={() => setScreen('review')}>
+            Revue
           </button>
-          <button type="button" className={view === 'split' ? 'is-on' : ''} onClick={() => onView('split')}>
-            Côte à côte
+          <button type="button" className={screen === 'grid' ? 'is-on' : ''} onClick={() => setScreen('grid')}>
+            Grille
           </button>
         </div>
-        <label className="check">
-          <input type="checkbox" checked={showAll} onChange={(e) => onShowAll(e.target.checked)} />
-          Fichier entier
-        </label>
-        <label className="check">
-          <input type="checkbox" checked={showFormulas} onChange={(e) => onShowFormulas(e.target.checked)} />
-          Formules
-        </label>
+        {screen === 'grid' ? (
+          <>
+            <div className="seg">
+              <button type="button" className={view === 'unified' ? 'is-on' : ''} onClick={() => onView('unified')}>
+                Unifié
+              </button>
+              <button type="button" className={view === 'split' ? 'is-on' : ''} onClick={() => onView('split')}>
+                Côte à côte
+              </button>
+            </div>
+            <label className="check">
+              <input type="checkbox" checked={showAll} onChange={(e) => onShowAll(e.target.checked)} />
+              Fichier entier
+            </label>
+            <label className="check">
+              <input type="checkbox" checked={showFormulas} onChange={(e) => onShowFormulas(e.target.checked)} />
+              Formules
+            </label>
+          </>
+        ) : null}
+        {screen === 'grid' ? (
         <div className="nav-changes">
           <button type="button" className="icon-btn" onClick={onPrev} disabled={changeCount === 0} title="Changement précédent (p)">
             <IconArrowUp />
@@ -187,6 +215,7 @@ export function DiffWorkspace({
             <IconArrowDown />
           </button>
         </div>
+        ) : null}
         <details className="options">
           <summary>
             <IconGear /> Options
@@ -241,10 +270,10 @@ export function DiffWorkspace({
       <div className="mergebar">
         <IconMerge className="mergebar-icon" />
         <button type="button" onClick={() => onAcceptAll('current')}>
-          Accepter toutes les actuelles
+          Tout garder : ancienne
         </button>
         <button type="button" onClick={() => onAcceptAll('incoming')}>
-          Accepter toutes les entrantes
+          Tout garder : nouvelle
         </button>
         <span className="mergebar-count">
           {pending.total === 0
@@ -256,7 +285,7 @@ export function DiffWorkspace({
           type="button"
           className="merge-save"
           onClick={onSaveMerged}
-          disabled={saving}
+          disabled={saving || highlighting}
           title="Conserve couleurs, polices, bordures et mises en forme. Les modifications encore en attente restent celles du fichier de base."
         >
           {saving ? 'Génération du fichier…' : 'Enregistrer le classeur fusionné'}
@@ -264,24 +293,37 @@ export function DiffWorkspace({
       </div>
 
       <main className="main">
-        <DiffView
-          sheet={sheet}
-          view={view}
-          showAll={showAll}
-          showFormulas={showFormulas || options.compareFormulas}
-          headerRow={options.headerRow}
-          changeIndex={changeIndex}
-          oldName={diff.oldName}
-          newName={diff.newName}
-          decisions={decisions}
-          merge={{
-            onRow: onRowDecision,
-            onCell: onCellDecision,
-            onColumn: onColumnDecision,
-            onHunk: onHunkDecision,
-            onSheet: onSheetDecision,
-          }}
-        />
+        {screen === 'review' ? (
+          <ReviewView
+            diff={diff}
+            decisions={decisions}
+            headerRow={options.headerRow}
+            selectedSheet={sheet.name}
+            onCellDecision={onCellDecision}
+            onRowDecision={onRowDecision}
+            onColumnDecision={onColumnDecision}
+            onSheetDecision={onSheetDecision}
+          />
+        ) : (
+          <DiffView
+            sheet={sheet}
+            view={view}
+            showAll={showAll}
+            showFormulas={showFormulas || options.compareFormulas}
+            headerRow={options.headerRow}
+            changeIndex={changeIndex}
+            oldName={diff.oldName}
+            newName={diff.newName}
+            decisions={decisions}
+            merge={{
+              onRow: (row, value) => onRowDecision(sheet.name, row, value),
+              onCell: (row, letter, value) => onCellDecision(sheet.name, row, letter, value),
+              onColumn: (letter, value) => onColumnDecision(sheet.name, letter, value),
+              onHunk: (rows, value) => onHunkDecision(sheet.name, rows, value),
+              onSheet: (value) => onSheetDecision(sheet.name, value),
+            }}
+          />
+        )}
       </main>
     </div>
   )

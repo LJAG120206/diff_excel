@@ -131,63 +131,169 @@ function headerLabel(row: CellData[] | undefined, index: number): string {
   return text || colLetter(index)
 }
 
-function alignColumns(oldSheet: SheetData, newSheet: SheetData, headerRow: boolean): ColumnAlign[] {
-  const oldWidth = oldSheet.rows[0]?.length ?? 0
-  const newWidth = newSheet.rows[0]?.length ?? 0
+function headerToken(row: CellData[] | undefined, index: number, useHeader: boolean, side: 'old' | 'new'): string {
+  if (!useHeader) return `\0${side}:${index}`
+  const text = cellText(row?.[index]).trim()
+  if (!text) return `\0${side}:${index}`
+  return text
+}
 
-  if (!headerRow) {
-    const max = Math.max(oldWidth, newWidth)
-    const cols: ColumnAlign[] = []
-    for (let i = 0; i < max; i++) {
-      const kind = i >= oldWidth ? 'added' : i >= newWidth ? 'removed' : 'same'
-      cols.push({
-        header: colLetter(i),
-        letter: colLetter(i),
-        oldIndex: i < oldWidth ? i : null,
-        newIndex: i < newWidth ? i : null,
-        kind,
-      })
+function cellToken(sheet: SheetData, rowIndex: number, columnIndex: number, options: DiffOptions): string {
+  const cell = getCell(sheet.rows[rowIndex], columnIndex)
+  const value = normalizeCell(cell, options, false)
+  if (value) return value
+  if (cell.formula) return `=${cell.formula.replace(/\s+/g, '')}`
+  return ''
+}
+
+function columnSimilarity(
+  oldSheet: SheetData,
+  oldIndex: number,
+  newSheet: SheetData,
+  newIndex: number,
+  options: DiffOptions,
+): number {
+  const start = options.headerRow ? 1 : 0
+  let best = 0
+  let sawValue = false
+  for (let offset = -2; offset <= 2; offset++) {
+    let compared = 0
+    let equal = 0
+    for (let rowIndex = start; rowIndex < oldSheet.rows.length; rowIndex++) {
+      const newRow = rowIndex + offset
+      if (newRow < start || newRow >= newSheet.rows.length) continue
+      const oldToken = cellToken(oldSheet, rowIndex, oldIndex, options)
+      const newToken = cellToken(newSheet, newRow, newIndex, options)
+      if (!oldToken && !newToken) continue
+      sawValue = true
+      compared++
+      if (oldToken === newToken) equal++
     }
-    return cols
+    if (compared > 0) best = Math.max(best, equal / compared)
+  }
+  if (!sawValue && Math.abs(oldIndex - newIndex) <= 1) return 0.5
+  return best
+}
+
+function pairShiftedColumns(
+  oldIdxs: number[],
+  newIdxs: number[],
+  oldSheet: SheetData,
+  newSheet: SheetData,
+  options: DiffOptions,
+): { oldIndex: number | null; newIndex: number | null }[] {
+  const n = oldIdxs.length
+  const m = newIdxs.length
+  if (n === 0) return newIdxs.map((newIndex) => ({ oldIndex: null, newIndex }))
+  if (m === 0) return oldIdxs.map((oldIndex) => ({ oldIndex, newIndex: null }))
+
+  const gap = 0.62
+  const score: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0))
+  const choice: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0))
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      const similarity = columnSimilarity(oldSheet, oldIdxs[i - 1]!, newSheet, newIdxs[j - 1]!, options)
+      const matched = similarity >= gap ? score[i - 1]![j - 1]! + similarity : -1
+      const dropOld = score[i - 1]![j]!
+      const dropNew = score[i]![j - 1]!
+      if (matched >= dropOld && matched >= dropNew) {
+        score[i]![j] = matched
+        choice[i]![j] = 1
+      } else if (dropOld >= dropNew) {
+        score[i]![j] = dropOld
+        choice[i]![j] = 2
+      } else {
+        score[i]![j] = dropNew
+        choice[i]![j] = 3
+      }
+    }
   }
 
-  const oldHeaders = Array.from({ length: oldWidth }, (_, i) =>
-    headerLabel(oldSheet.rows[0], i),
-  )
-  const newHeaders = Array.from({ length: newWidth }, (_, i) =>
-    headerLabel(newSheet.rows[0], i),
-  )
-  const edits = myers(oldHeaders, newHeaders)
-  const cols: ColumnAlign[] = []
-  let letterIndex = 0
-  for (const edit of edits) {
-    if (edit.type === 'eq') {
-      cols.push({
-        header: newHeaders[edit.b!]!,
-        letter: colLetter(letterIndex++),
-        oldIndex: edit.a!,
-        newIndex: edit.b!,
-        kind: 'same',
-      })
-    } else if (edit.type === 'del') {
-      cols.push({
-        header: oldHeaders[edit.a!]!,
-        letter: colLetter(letterIndex++),
-        oldIndex: edit.a!,
-        newIndex: null,
-        kind: 'removed',
-      })
+  const reversed: { oldIndex: number | null; newIndex: number | null }[] = []
+  let i = n
+  let j = m
+  while (i > 0 || j > 0) {
+    const step = i > 0 && j > 0 ? choice[i]![j]! : i > 0 ? 2 : 3
+    if (step === 1) {
+      reversed.push({ oldIndex: oldIdxs[i - 1]!, newIndex: newIdxs[j - 1]! })
+      i--
+      j--
+    } else if (step === 2) {
+      reversed.push({ oldIndex: oldIdxs[i - 1]!, newIndex: null })
+      i--
     } else {
-      cols.push({
-        header: newHeaders[edit.b!]!,
-        letter: colLetter(letterIndex++),
-        oldIndex: null,
-        newIndex: edit.b!,
-        kind: 'added',
-      })
+      reversed.push({ oldIndex: null, newIndex: newIdxs[j - 1]! })
+      j--
     }
   }
-  return cols
+  return reversed.reverse()
+}
+
+function weakenRepeatedHeaders(tokens: string[], side: 'old' | 'new'): string[] {
+  const counts = new Map<string, number>()
+  for (const token of tokens) {
+    if (token.startsWith('\0')) continue
+    counts.set(token, (counts.get(token) ?? 0) + 1)
+  }
+  return tokens.map((token, index) => {
+    if (token.startsWith('\0')) return token
+    if ((counts.get(token) ?? 0) > 1) return `\0${side}:dup:${index}`
+    return token
+  })
+}
+
+function sheetWidth(sheet: SheetData): number {
+  let width = 0
+  for (const row of sheet.rows) width = Math.max(width, row.length)
+  return width
+}
+
+function alignColumns(oldSheet: SheetData, newSheet: SheetData, options: DiffOptions): ColumnAlign[] {
+  const oldWidth = sheetWidth(oldSheet)
+  const newWidth = sheetWidth(newSheet)
+  const oldTokens = weakenRepeatedHeaders(
+    Array.from({ length: oldWidth }, (_, i) => headerToken(oldSheet.rows[0], i, options.headerRow, 'old')),
+    'old',
+  )
+  const newTokens = weakenRepeatedHeaders(
+    Array.from({ length: newWidth }, (_, i) => headerToken(newSheet.rows[0], i, options.headerRow, 'new')),
+    'new',
+  )
+  const edits = myers(oldTokens, newTokens)
+  const links: { oldIndex: number | null; newIndex: number | null }[] = []
+  let cursor = 0
+  while (cursor < edits.length) {
+    const edit = edits[cursor]!
+    if (edit.type === 'eq') {
+      links.push({ oldIndex: edit.a!, newIndex: edit.b! })
+      cursor++
+      continue
+    }
+    const oldIdxs: number[] = []
+    const newIdxs: number[] = []
+    while (cursor < edits.length && edits[cursor]!.type !== 'eq') {
+      const current = edits[cursor]!
+      if (current.type === 'del') oldIdxs.push(current.a!)
+      else if (current.b != null) newIdxs.push(current.b)
+      cursor++
+    }
+    links.push(...pairShiftedColumns(oldIdxs, newIdxs, oldSheet, newSheet, options))
+  }
+
+  let letterIndex = 0
+  return links.map((link) => {
+    const letter = colLetter(letterIndex++)
+    const newHeader = link.newIndex != null ? cellText(newSheet.rows[0]?.[link.newIndex]).trim() : ''
+    const oldHeader = link.oldIndex != null ? cellText(oldSheet.rows[0]?.[link.oldIndex]).trim() : ''
+    const kind = link.oldIndex == null ? 'added' : link.newIndex == null ? 'removed' : 'same'
+    return {
+      header: (options.headerRow ? newHeader || oldHeader : '') || letter,
+      letter,
+      oldIndex: link.oldIndex,
+      newIndex: link.newIndex,
+      kind,
+    }
+  })
 }
 
 function getCell(row: CellData[] | undefined, index: number | null): CellData {
@@ -693,7 +799,7 @@ function diffSheet(
     }
   }
 
-  const columns = alignColumns(oldSheet!, newSheet!, options.headerRow)
+  const columns = alignColumns(oldSheet!, newSheet!, options)
   const pairs = buildPairs(oldSheet!.rows, newSheet!.rows, columns, options, options.headerRow)
   const allRows = rowsFromPairs(pairs, columns, options)
   const stats = statsFromRows(allRows, columns, options.headerRow)
